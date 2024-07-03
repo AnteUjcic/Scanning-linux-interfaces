@@ -1,0 +1,36 @@
+#!/bin/bash
+# Telegram bot details
+
+TELEGRAM_BOT_TOKEN="xxxxx"
+
+TELEGRAM_CHAT_ID="-xxxxxx"
+# Function to send message to Telegram
+
+send_telegram_message() {
+
+    local message=$1
+
+    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$message"
+}
+# List of network interfaces to monitor
+#INTERFACES=("eth0" "eth1" "eth2" "eth3")
+INTERFACES=("enp1s0" "enp2s0" "enp3s0" "enp4s0")
+# Threshold for considering traffic (bytes)
+THRESHOLD=1
+# Check each interface for traffic
+for iface in "${INTERFACES[@]}"; do
+    RX_BYTES_BEFORE=$(cat /sys/class/net/$iface/statistics/rx_bytes)
+    TX_BYTES_BEFORE=$(cat /sys/class/net/$iface/statistics/tx_bytes)
+    sleep 1
+    RX_BYTES_AFTER=$(cat /sys/class/net/$iface/statistics/rx_bytes)
+    TX_BYTES_AFTER=$(cat /sys/class/net/$iface/statistics/tx_bytes)
+    
+    RX_BYTES_DIFF=$((RX_BYTES_AFTER - RX_BYTES_BEFORE))
+    TX_BYTES_DIFF=$((TX_BYTES_AFTER - TX_BYTES_BEFORE))
+    
+
+    if [ "$RX_BYTES_DIFF" -gt "$THRESHOLD" ] || [ "$TX_BYTES_DIFF" -gt "$THRESHOLD" ]; then
+        send_telegram_message "Traffic detected on interface $iface: RX=$RX_BYTES_DIFF bytes, TX=$TX_BYTES_DIFF bytes"
+    fi
+done
+
