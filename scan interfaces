@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# Telegram bot details
+TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
+TELEGRAM_CHAT_ID="your_telegram_chat_id"
+
+# Path to the device info file
+DEVICE_INFO_FILE="/path/to/devinfo.txt"
+
+# Function to send a message to Telegram
+send_telegram_message() {
+    local message=$1
+    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$message"
+}
+
+# Function to get current device info (IP and MAC)
+get_current_device_info() {
+    local interface=$1
+    sudo arp-scan --interface=$interface --localnet | grep -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' | awk '{print $1, $2}'
+}
+
+# Read the known device info
+read_known_device_info() {
+    if [ -f "$DEVICE_INFO_FILE" ]; then
+        cat "$DEVICE_INFO_FILE"
+    else
+        echo "Device info file not found"
+        exit 1
+    fi
+}
+
+# Check if current device info matches known device info
+check_device_info() {
+    local current_info="$1"
+    local known_info="$2"
+
+    if [[ "$current_info" != "$known_info" ]]; then
+        send_telegram_message "Device information mismatch detected. Current: $current_info, Expected: $known_info"
+    fi
+}
+
+# Main routine
+main() {
+    local interface="enp4s0"
+    local current_device_info
+    local known_device_info
+
+    current_device_info=$(get_current_device_info $interface)
+    known_device_info=$(read_known_device_info)
+
+    check_device_info "$current_device_info" "$known_device_info"
+}
+
+# Run the main routine
+main
