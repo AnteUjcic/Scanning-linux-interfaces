@@ -1,0 +1,30 @@
+#!/bin/bash
+KNOWN_DEVICES_FILE="./known_devices.txt"
+CURRENT_DEVICES_FILE="./current_devices.txt"
+NEW_DEVICES_FILE="./new_devices.txt"
+
+# List of network interfaces to scan
+INTERFACES=("enp1s0" "enp2s0" "enp3s0" "enp4s0")
+
+# Empty the current devices file
+> "$CURRENT_DEVICES_FILE"
+
+# Scan each interface and append to current devices file
+for iface in "${INTERFACES[@]}"; do
+    ip neigh show dev "$iface"  >> "$CURRENT_DEVICES_FILE"
+done
+
+# Extract MAC addresses from the scan
+grep -oE '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' "$CURRENT_DEVICES_FILE" > "$CURRENT_DEVICES_FILE.macs"
+
+# Compare with known devices
+comm -23 <(sort "$CURRENT_DEVICES_FILE.macs") <(sort "$KNOWN_DEVICES_FILE") > "$NEW_DEVICES_FILE"
+
+# If there are new devices, output them and update the known devices list
+if [ -s "$NEW_DEVICES_FILE" ]; then
+    cat "$NEW_DEVICES_FILE"
+    cat "$CURRENT_DEVICES_FILE.macs" >> "$KNOWN_DEVICES_FILE"
+fi
+
+# Clean up temporary files
+rm "$CURRENT_DEVICES_FILE.macs"
