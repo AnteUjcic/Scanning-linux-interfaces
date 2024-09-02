@@ -1,0 +1,5 @@
+sudo iptables -t nat -A PREROUTING -p tcp --dport 8753 -d 10.0.0.18 -j DNAT --to-destination 192.168.2.52:3389
+
+sudo iptables -A FORWARD -p tcp -d 192.168.2.52 --dport 3389 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+sudo iptables -A FORWARD -p tcp -s 192.168.2.52 --sport 3389 -m state --state ESTABLISHED,RELATED -j ACCEPT
