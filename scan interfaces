@@ -2,46 +2,56 @@
 
 TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
 TELEGRAM_CHAT_ID="your_telegram_chat_id"
-
+INTERFACE="enp4s0"
 DEVICE_INFO_FILE="/path/to/devinfo.txt"
 
+export LC_ALL=C
+
 send_telegram_message() {
-    local message=$1
-    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$message"
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$1" > /dev/null
 }
 
-get_current_device_info() {
-    local interface=$1
-    sudo arp-scan --interface=$interface --localnet | grep -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' | awk '{print $1, $2}'
-}
-
-read_known_device_info() {
-    if [ -f "$DEVICE_INFO_FILE" ]; then
-        cat "$DEVICE_INFO_FILE"
-    else
-        echo "Device info file not found"
-        exit 1
-    fi
-}
-
-check_device_info() {
-    local current_info="$1"
-    local known_info="$2"
-
-    if [[ "$current_info" != "$known_info" ]]; then
-        send_telegram_message "Device information mismatch detected. Current: $current_info, Expected: $known_info"
-    fi
+scan_devices() {
+    sudo arp-scan --interface="$INTERFACE" --localnet 2>/dev/null \
+        | grep -Ei '^[0-9.]+[[:space:]]+([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}' \
+        | grep -v 'DUP:' \
+        | awk '{print tolower($2), $1}' \
+        | sort -u -k1,1
 }
 
 main() {
-    local interface="enp4s0"
-    local current_device_info
-    local known_device_info
+    local current known new_devices missing_devices message
 
-    current_device_info=$(get_current_device_info $interface)
-    known_device_info=$(read_known_device_info)
+    current=$(scan_devices)
 
-    check_device_info "$current_device_info" "$known_device_info"
+    if [ -z "$current" ]; then
+        send_telegram_message "arp-scan returned no devices on $INTERFACE (scan failed?)"
+        exit 1
+    fi
+
+    if [ "$1" = "--init" ]; then
+        printf '%s\n' "$current" > "$DEVICE_INFO_FILE"
+        exit 0
+    fi
+
+    if [ ! -f "$DEVICE_INFO_FILE" ]; then
+        send_telegram_message "Baseline file $DEVICE_INFO_FILE not found"
+        exit 1
+    fi
+
+    known=$(sort -u -k1,1 "$DEVICE_INFO_FILE")
+
+    new_devices=$(join -j1 -v2 <(printf '%s\n' "$known") <(printf '%s\n' "$current"))
+    missing_devices=$(join -j1 -v1 <(printf '%s\n' "$known") <(printf '%s\n' "$current"))
+
+    if [ -n "$new_devices" ] || [ -n "$missing_devices" ]; then
+        message="Device change on $INTERFACE"
+        [ -n "$new_devices" ] && message+=$'\n\nNEW (MAC IP):\n'"$new_devices"
+        [ -n "$missing_devices" ] && message+=$'\n\nMISSING (MAC IP):\n'"$missing_devices"
+        send_telegram_message "$message"
+    fi
 }
 
-main
+main "$@"
