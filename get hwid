@@ -1,23 +1,46 @@
 #!/bin/bash
-KNOWN_DEVICES_FILE="./known_devices.txt"
-CURRENT_DEVICES_FILE="./current_devices.txt"
-NEW_DEVICES_FILE="./new_devices.txt"
 
+set -u
+export LC_ALL=C
+
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KNOWN_DEVICES_FILE="$BASE_DIR/known_devices.txt"
 INTERFACES=("enp1s0" "enp2s0" "enp3s0" "enp4s0")
 
-> "$CURRENT_DEVICES_FILE"
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+current_raw="$tmp_dir/current_raw.txt"
+current_sorted="$tmp_dir/current_sorted.txt"
+known_sorted="$tmp_dir/known_sorted.txt"
+new_devices="$tmp_dir/new_devices.txt"
+
+: > "$current_raw"
 
 for iface in "${INTERFACES[@]}"; do
-    ip neigh show dev "$iface"  >> "$CURRENT_DEVICES_FILE"
+    ip neigh show dev "$iface" 2>/dev/null \
+        | grep -Ev 'FAILED|INCOMPLETE' \
+        | awk -v iface="$iface" '
+            {
+                for (i = 1; i < NF; i++) {
+                    if ($i == "lladdr") {
+                        print tolower($(i + 1)), iface, $1
+                    }
+                }
+            }' >> "$current_raw"
 done
 
-grep -oE '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' "$CURRENT_DEVICES_FILE" > "$CURRENT_DEVICES_FILE.macs"
+sort -u -k1,1 "$current_raw" > "$current_sorted"
 
-comm -23 <(sort "$CURRENT_DEVICES_FILE.macs") <(sort "$KNOWN_DEVICES_FILE") > "$NEW_DEVICES_FILE"
-
-if [ -s "$NEW_DEVICES_FILE" ]; then
-    cat "$NEW_DEVICES_FILE"
-    cat "$CURRENT_DEVICES_FILE.macs" >> "$KNOWN_DEVICES_FILE"
+if [ -f "$KNOWN_DEVICES_FILE" ]; then
+    tr 'A-F' 'a-f' < "$KNOWN_DEVICES_FILE" | sort -u > "$known_sorted"
+else
+    : > "$known_sorted"
 fi
 
-rm "$CURRENT_DEVICES_FILE.macs"
+join -v1 "$current_sorted" "$known_sorted" > "$new_devices"
+
+if [ -s "$new_devices" ]; then
+    cat "$new_devices"
+    { cat "$known_sorted"; cut -d' ' -f1 "$new_devices"; } | sort -u > "$KNOWN_DEVICES_FILE"
+fi
