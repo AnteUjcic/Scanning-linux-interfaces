@@ -1,33 +1,48 @@
 #!/bin/bash
 
 TELEGRAM_BOT_TOKEN="xxxxx"
-
 TELEGRAM_CHAT_ID="-xxxxxx"
 
+INTERFACES=("enp1s0" "enp2s0" "enp3s0" "enp4s0")
+THRESHOLD=1
+INTERVAL=1
+
 send_telegram_message() {
-
-    local message=$1
-
-    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$message"
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$1" > /dev/null
 }
 
-INTERFACES=("enp1s0" "enp2s0" "enp3s0" "enp4s0")
+read_counter() {
+    cat "/sys/class/net/$1/statistics/$2" 2>/dev/null
+}
 
-THRESHOLD=1
+declare -A rx_before tx_before
 
 for iface in "${INTERFACES[@]}"; do
-    RX_BYTES_BEFORE=$(cat /sys/class/net/$iface/statistics/rx_bytes)
-    TX_BYTES_BEFORE=$(cat /sys/class/net/$iface/statistics/tx_bytes)
-    sleep 1
-    RX_BYTES_AFTER=$(cat /sys/class/net/$iface/statistics/rx_bytes)
-    TX_BYTES_AFTER=$(cat /sys/class/net/$iface/statistics/tx_bytes)
-    
-    RX_BYTES_DIFF=$((RX_BYTES_AFTER - RX_BYTES_BEFORE))
-    TX_BYTES_DIFF=$((TX_BYTES_AFTER - TX_BYTES_BEFORE))
-    
+    rx_before[$iface]=$(read_counter "$iface" rx_bytes)
+    tx_before[$iface]=$(read_counter "$iface" tx_bytes)
+done
 
-    if [ "$RX_BYTES_DIFF" -gt "$THRESHOLD" ] || [ "$TX_BYTES_DIFF" -gt "$THRESHOLD" ]; then
-        send_telegram_message "Traffic detected on interface $iface: RX=$RX_BYTES_DIFF bytes, TX=$TX_BYTES_DIFF bytes"
+sleep "$INTERVAL"
+
+message=""
+
+for iface in "${INTERFACES[@]}"; do
+    [ -z "${rx_before[$iface]}" ] || [ -z "${tx_before[$iface]}" ] && continue
+
+    rx_after=$(read_counter "$iface" rx_bytes)
+    tx_after=$(read_counter "$iface" tx_bytes)
+    [ -z "$rx_after" ] || [ -z "$tx_after" ] && continue
+
+    rx_rate=$(( (rx_after - rx_before[$iface]) / INTERVAL ))
+    tx_rate=$(( (tx_after - tx_before[$iface]) / INTERVAL ))
+
+    if [ "$rx_rate" -gt "$THRESHOLD" ] || [ "$tx_rate" -gt "$THRESHOLD" ]; then
+        message+="$iface: RX=${rx_rate} B/s, TX=${tx_rate} B/s"$'\n'
     fi
 done
 
+if [ -n "$message" ]; then
+    send_telegram_message "Traffic detected:"$'\n'"$message"
+fi
